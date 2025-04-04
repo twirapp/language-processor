@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Response, status, HTTPException
-from googletrans import Translator
+from  googletrans import Translator
 import fasttext
 import time
 import numpy as np
@@ -14,17 +14,29 @@ app = FastAPI()
 translator = Translator()
 fasttext_detector = fasttext.load_model("lid.176.bin")
 
-@app.get("/translate")
-async def translate(text: str, dest: str, src: str, response: Response = None):
+class TranslateRequest(BaseModel):
+    text: str
+    dest: str
+    src: str
+    excluded_words: List[str] | None = None
+
+@app.post("/translate")
+async def translate(request: TranslateRequest, response: Response = None):
     # Return 204 if source language matches destination
-    if src == dest:
+    if request.src == request.dest:
         response.status_code = status.HTTP_204_NO_CONTENT
         return
+
+    # Process excluded words
+    working_text = request.text
+    if request.excluded_words:
+        for idx, word in enumerate(request.excluded_words):
+            working_text = working_text.replace(word, f"__{idx}__")
 
     # Measure translate time
     translate_start = time.time()
     try:
-        translations = await translator.translate([text.strip()], dest=dest, src=src)
+        translations = await translator.translate([working_text.strip()], dest=request.dest, src=request.src)
         if not translations:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -37,13 +49,19 @@ async def translate(text: str, dest: str, src: str, response: Response = None):
         )
     translate_time = time.time() - translate_start
 
-    print(f"Translation completed: Text: {text} | Result: {[t.text for t in translations]} | Translation time: {translate_time:.3f}s")
+    # Replace placeholders back with excluded words
+    translated_text = translations[0].text
+    if request.excluded_words:
+        for idx, word in enumerate(request.excluded_words):
+            translated_text = translated_text.replace(f"__{idx}__", word)
+
+    print(f"Translation completed: Text: {request.text} | Result: {translated_text} | Translation time: {translate_time:.3f}s")
     
     return {
-        "source_language": src,
-        "source_text": text,
-        "translated_text": [t.text for t in translations],
-        "destination_language": dest
+        "source_language": request.src,
+        "source_text": request.text,
+        "translated_text": [translated_text],
+        "destination_language": request.dest
     }
 
 @app.get("/detect")
